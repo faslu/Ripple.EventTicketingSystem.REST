@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
+    <ProjectReference Include="..\Ripple.EventTicketingSystem.DBContext\Ripple.EventTicketingSystem.DBContext.csproj" />
+    <ProjectReference Include="..\Ripple.EventTicketingSystem.Domain\Ripple.EventTicketingSystem.Domain.csproj" />
+    <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
+  </ItemGroup>
+
+</Project>
