@@ -3,7 +3,7 @@
     <File Path="src/Ripple.EventTicketingSystem.API/README.md" />
     <Project Path="src/Ripple.EventTicketingSystem.API/Ripple.EventTicketingSystem.API.csproj" />
     <Project Path="src/Ripple.EventTicketingSystem.Application/Ripple.EventTicketingSystem.Application.csproj" />
-    <Project Path="src/Ripple.EventTicketingSystem.DBContext/Ripple.EventTicketingSystem.Infrastructure.csproj" />
+    <Project Path="src/Ripple.EventTicketingSystem.Infrastructure/Ripple.EventTicketingSystem.Infrastructure.csproj" />
     <Project Path="src/Ripple.EventTicketingSystem.Domain/Ripple.EventTicketingSystem.Domain.csproj" />
   </Folder>
   <Folder Name="/Tests/">
