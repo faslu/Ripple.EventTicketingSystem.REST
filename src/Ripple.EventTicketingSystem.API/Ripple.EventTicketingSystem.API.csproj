@@ -13,7 +13,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
-    <ProjectReference Include="..\Ripple.EventTicketingSystem.DBContext\Ripple.EventTicketingSystem.DBContext.csproj" />
+    <ProjectReference Include="..\Ripple.EventTicketingSystem.DBContext\Ripple.EventTicketingSystem.Infrastructure.csproj" />
     <ProjectReference Include="..\Ripple.EventTicketingSystem.Domain\Ripple.EventTicketingSystem.Domain.csproj" />
     <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
   </ItemGroup>

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Ripple.EventTicketingSystem.Application.Interfaces;
-using Ripple.EventTicketingSystem.DBContext.Data;
+using Ripple.EventTicketingSystem.Infrastructure.Data;
 using Ripple.EventTicketingSystem.Application.Services;
 using RippleEventTracking.Api.Middleware;
 

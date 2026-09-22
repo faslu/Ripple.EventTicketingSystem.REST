@@ -1,6 +1,6 @@
 @Ripple.EventTicketingSystem_HostAddress = http://localhost:5069
 
-GET {{Ripple.EventTicketingSystem_HostAddress}}/weatherforecast/
+GET {{Ripple.EventTicketingSystem_HostAddress}}/events/
 Accept: application/json
 
 ###

@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace Ripple.EventTicketingSystem.DBContext.Data
+namespace Ripple.EventTicketingSystem.Infrastructure.Data
 {
     public class TicketingDbContext : DbContext, ITicketingDbContext
     {
