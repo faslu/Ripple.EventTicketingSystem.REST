@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Ripple.EventTicketingSystem.Application.Interfaces;
-using Ripple.EventTicketingSystem.Infrastructure.Data;
+using Ripple.EventTicketingSystem.Application.Options;
 using Ripple.EventTicketingSystem.Application.Services;
+using Ripple.EventTicketingSystem.Infrastructure.Data;
+using Ripple.EventTicketingSystem.Infrastructure.Repositories;
 using RippleEventTracking.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,10 +25,13 @@ builder.Services.AddDbContext<TicketingDbContext>(options =>
     options.UseSqlServer(
         builder.Configuration.GetConnectionString("RippleEventTracking"));
 });
+builder.Services.Configure<TicketingOptions>(
+    builder.Configuration.GetSection("Ticketing"));
 
-// Application database abstraction
-builder.Services.AddScoped<ITicketingDbContext>(sp =>
-    sp.GetRequiredService<TicketingDbContext>());
+builder.Services.AddScoped<IEventRepository, EventRepository>();
+builder.Services.AddScoped<IPricingTierRepository, PricingTierRepository>();
+builder.Services.AddScoped<ITicketRepository, TicketRepository>();
+builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 // Application services
 builder.Services.AddScoped<IEventService, EventService>();

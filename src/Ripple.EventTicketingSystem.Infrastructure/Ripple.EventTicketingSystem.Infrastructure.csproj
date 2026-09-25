@@ -16,7 +16,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
-    <ProjectReference Include="..\Ripple.EventTicketingSystem.Domain\Ripple.EventTicketingSystem.Domain.csproj" />
   </ItemGroup>
 
 </Project>

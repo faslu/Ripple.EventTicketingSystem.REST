@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>2f56ee49-3aee-4969-b078-4957fa854398</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -12,9 +13,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
-    <ProjectReference Include="..\Ripple.EventTicketingSystem.Domain\Ripple.EventTicketingSystem.Domain.csproj" />
-    <ProjectReference Include="..\Ripple.EventTicketingSystem.Application\Ripple.EventTicketingSystem.Application.csproj" />
     <ProjectReference Include="..\Ripple.EventTicketingSystem.Infrastructure\Ripple.EventTicketingSystem.Infrastructure.csproj" />
   </ItemGroup>
 

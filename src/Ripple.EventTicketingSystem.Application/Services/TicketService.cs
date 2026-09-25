@@ -1,23 +1,24 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.Extensions.Options;
 using Ripple.EventTicketingSystem.Application.DTOs.Tickets;
-using Ripple.EventTicketingSystem.Domain.Models;
 using Ripple.EventTicketingSystem.Application.Interfaces;
+using Ripple.EventTicketingSystem.Application.Options;
 using Ripple.EventTicketingSystem.Domain.Exceptions;
-
+using Ripple.EventTicketingSystem.Domain.Models;
 
 namespace Ripple.EventTicketingSystem.Application.Services
 {
-
     public class TicketService : ITicketService
     {
-        private readonly ITicketingDbContext _db;
+        private readonly IUnitOfWork _unitOfWork;
+        private readonly TicketingOptions _options;
 
-        public TicketService(ITicketingDbContext db)
+        public TicketService(
+            IUnitOfWork unitOfWork,
+            IOptions<TicketingOptions> options)
         {
-            _db = db;
+            _unitOfWork = unitOfWork;
+            _options = options.Value;
+
         }
 
         public async Task<TicketResponse> PurchaseAsync(
@@ -25,9 +26,16 @@ namespace Ripple.EventTicketingSystem.Application.Services
             PurchaseTicketRequest request,
             CancellationToken cancellationToken)
         {
-            var eventExists = await _db.Events
-                .AnyAsync(
-                    x => x.Id == eventId,
+
+            // Validate maximum tickets allowed per purchase
+            if (request.Quantity > _options.MaxTicketsPerPurchase)
+            {
+                throw new ValidationException(
+                    $"You can purchase a maximum of {_options.MaxTicketsPerPurchase} tickets per purchase.");
+            }
+            var eventExists = await _unitOfWork.Events
+                .ExistsAsync(
+                    eventId,
                     cancellationToken);
 
             if (!eventExists)
@@ -36,56 +44,56 @@ namespace Ripple.EventTicketingSystem.Application.Services
                     $"Event '{eventId}' was not found.");
             }
 
-            await using var transaction =
-                await _db.BeginTransactionAsync(
-                    cancellationToken);
+            Ticket? ticket = null;
+            PricingTier? tier = null;
 
-            var tier = await _db.PricingTiers
-                .FirstOrDefaultAsync(
-                    x => x.Id == request.PricingTierId &&
-                         x.EventId == eventId,
-                    cancellationToken);
+            
+                await _unitOfWork.ExecuteInTransactionAsync(
+                    async ct =>
+                    {
+                        tier = await _unitOfWork.PricingTiers
+                            .GetForEventAsync(
+                                request.PricingTierId,
+                                eventId,
+                                ct);
 
-            if (tier == null)
+                        if (tier == null)
+                        {
+                            throw new NotFoundException(
+                                "Pricing tier was not found for this event.");
+                        }
+
+                        if (tier.AvailableQuantity < request.Quantity)
+                        {
+                            throw new ConflictException(
+                                $"Only {tier.AvailableQuantity} tickets are available.");
+                        }
+
+                        tier.AvailableQuantity -= request.Quantity;
+
+                        ticket = new Ticket
+                        {
+                            Id = Guid.NewGuid(),
+                            EventId = eventId,
+                            PricingTierId = tier.Id,
+                            Quantity = request.Quantity,
+                            CustomerName = request.CustomerName.Trim(),
+                            CustomerEmail = request.CustomerEmail.Trim(),
+                            UnitPrice = tier.Price,
+                            PurchaseDate = DateTime.UtcNow
+                        };
+
+                        _unitOfWork.Tickets.Add(ticket);
+
+                        await _unitOfWork.SaveChangesAsync(ct);
+                    },
+                    cancellationToken);           
+            
+
+            if (ticket == null || tier == null)
             {
-                throw new NotFoundException(
-                    "Pricing tier was not found for this event.");
-            }
-
-            if (tier.AvailableQuantity < request.Quantity)
-            {
-                throw new ConflictException(
-                    $"Only {tier.AvailableQuantity} tickets are available.");
-            }
-
-            tier.AvailableQuantity -= request.Quantity;
-
-            var ticket = new Ticket
-            {
-                Id = Guid.NewGuid(),
-                EventId = eventId,
-                PricingTierId = tier.Id,
-                Quantity = request.Quantity,
-                CustomerName = request.CustomerName.Trim(),
-                CustomerEmail = request.CustomerEmail.Trim(),
-                UnitPrice = tier.Price,
-                PurchaseDate = DateTime.UtcNow
-            };
-
-            _db.Tickets.Add(ticket);
-
-            try
-            {
-                await _db.SaveChangesAsync(cancellationToken);
-
-                await transaction.CommitAsync(cancellationToken);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-
-                throw new ConflictException(
-                    "The tickets were purchased by another customer. Please try again.");
+                throw new InvalidOperationException(
+                    "Ticket purchase did not complete.");
             }
 
             return new TicketResponse
@@ -98,7 +106,10 @@ namespace Ripple.EventTicketingSystem.Application.Services
                 CustomerName = ticket.CustomerName,
                 CustomerEmail = ticket.CustomerEmail,
                 UnitPrice = ticket.UnitPrice,
+
+                // TotalAmount is calculated by SQL Server.
                 TotalAmount = ticket.Quantity * ticket.UnitPrice,
+
                 PurchaseDate = ticket.PurchaseDate
             };
         }
@@ -107,11 +118,10 @@ namespace Ripple.EventTicketingSystem.Application.Services
             Guid eventId,
             CancellationToken cancellationToken)
         {
-            var entity = await _db.Events
-                .AsNoTracking()
-                .Include(x => x.PricingTiers)
-                .FirstOrDefaultAsync(
-                    x => x.Id == eventId,
+            var entity = await _unitOfWork.Events
+                .GetByIdAsync(
+                    eventId,
+                    includePricingTiers: true,
                     cancellationToken);
 
             if (entity == null)

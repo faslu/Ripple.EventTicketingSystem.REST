@@ -13,11 +13,11 @@ namespace Ripple.EventTicketingSystem.Application.Services
 
     public class EventService : IEventService
     {
-        private readonly ITicketingDbContext _db;
+        private readonly IUnitOfWork _unitOfWork;
 
-        public EventService(ITicketingDbContext db)
+        public EventService(IUnitOfWork unitOfWork)
         {
-            _db = db;
+            _unitOfWork = unitOfWork;
         }
 
         public async Task<EventResponse> CreateAsync(
@@ -74,9 +74,9 @@ namespace Ripple.EventTicketingSystem.Application.Services
                 });
             }
 
-            _db.Events.Add(entity);
+            _unitOfWork.Events.Add(entity);
 
-            await _db.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             return Map(entity);
         }
@@ -84,12 +84,8 @@ namespace Ripple.EventTicketingSystem.Application.Services
         public async Task<List<EventResponse>> GetAllAsync(
             CancellationToken cancellationToken)
         {
-            var events = await _db.Events
-                .AsNoTracking()
-                .Include(x => x.PricingTiers)
-                .OrderBy(x => x.EventDate)
-                .ThenBy(x => x.EventTime)
-                .ToListAsync(cancellationToken);
+            var events = await _unitOfWork.Events
+                                .GetAllAsync(cancellationToken);
 
             return events.Select(Map).ToList();
         }
@@ -98,11 +94,10 @@ namespace Ripple.EventTicketingSystem.Application.Services
             Guid id,
             CancellationToken cancellationToken)
         {
-            var entity = await _db.Events
-                .AsNoTracking()
-                .Include(x => x.PricingTiers)
-                .FirstOrDefaultAsync(
-                    x => x.Id == id,
+            var entity = await _unitOfWork.Events
+                    .GetByIdAsync(
+                    id,
+                    includePricingTiers: true,
                     cancellationToken);
 
             if (entity == null)
@@ -119,11 +114,11 @@ namespace Ripple.EventTicketingSystem.Application.Services
             UpdateEventRequest request,
             CancellationToken cancellationToken)
         {
-            var entity = await _db.Events
-                .Include(x => x.PricingTiers)
-                .FirstOrDefaultAsync(
-                    x => x.Id == id,
-                    cancellationToken);
+            var entity = await _unitOfWork.Events
+                        .GetByIdAsync(
+                            id,
+                            includePricingTiers: true,
+                            cancellationToken);
 
             if (entity == null)
             {
@@ -153,7 +148,7 @@ namespace Ripple.EventTicketingSystem.Application.Services
             entity.TotalCapacity = request.TotalCapacity;
             entity.UpdatedAt = DateTime.UtcNow;
 
-            await _db.SaveChangesAsync(cancellationToken);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
 
             return Map(entity);
         }
@@ -162,10 +157,10 @@ namespace Ripple.EventTicketingSystem.Application.Services
             Guid id,
             CancellationToken cancellationToken)
         {
-            var entity = await _db.Events
-                .FirstOrDefaultAsync(
-                    x => x.Id == id,
-                    cancellationToken);
+            var entity = await _unitOfWork.Events
+                        .GetByIdAsync(
+                            id,
+                            cancellationToken: cancellationToken);
 
             if (entity == null)
             {
@@ -173,10 +168,8 @@ namespace Ripple.EventTicketingSystem.Application.Services
                     $"Event '{id}' was not found.");
             }
 
-            var hasTickets = await _db.Tickets
-                .AnyAsync(
-                    x => x.EventId == id,
-                    cancellationToken);
+            var hasTickets = await _unitOfWork.Tickets
+                            .ExistsForEventAsync(id, cancellationToken);
 
             if (hasTickets)
             {
@@ -184,9 +177,8 @@ namespace Ripple.EventTicketingSystem.Application.Services
                     "An event with ticket sales cannot be deleted.");
             }
 
-            _db.Events.Remove(entity);
-
-            await _db.SaveChangesAsync(cancellationToken);
+            _unitOfWork.Events.Remove(entity);
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
         }
 
         private static EventResponse Map(Event entity)

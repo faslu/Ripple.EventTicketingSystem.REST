@@ -1,143 +1,191 @@
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using MockQueryable.Moq;
 using Moq;
+using Ripple.EventTicketingSystem.Application.DTOs.Reports;
 using Ripple.EventTicketingSystem.Application.Interfaces;
 using Ripple.EventTicketingSystem.Application.Services;
-using Ripple.EventTicketingSystem.Domain.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Ripple.EventTicketingSystem.Application.Tests.Services
 {
     [TestClass]
     public class ReportServiceTests
     {
+        private Mock<IUnitOfWork> _unitOfWork = null!;
+        private Mock<IEventRepository> _eventRepository = null!;
+        private ReportService _service = null!;
+
+        [TestInitialize]
+        public void TestInitialize()
+        {
+            _unitOfWork = new Mock<IUnitOfWork>();
+            _eventRepository = new Mock<IEventRepository>();
+
+            _unitOfWork
+                .SetupGet(x => x.Events)
+                .Returns(_eventRepository.Object);
+
+            _service = new ReportService(_unitOfWork.Object);
+        }
+
         [TestMethod]
-        public async Task GetSalesSummaryAsync_WhenNoEvents_ReturnsEmptyList()
+        public async Task GetSalesSummaryAsync_WhenRepositoryReturnsEmptyList_ReturnsEmptyList()
         {
             // Arrange
-            var mockDb = new Mock<ITicketingDbContext>();
-            mockDb.Setup(x => x.Events)
-                  .Returns(new List<Event>().BuildMockDbSet().Object);
+            var cancellationToken = CancellationToken.None;
 
-            var service = new ReportService(mockDb.Object);
+            _eventRepository
+                .Setup(x => x.GetSalesSummaryAsync(cancellationToken))
+                .ReturnsAsync(new List<SalesSummaryResponse>());
 
             // Act
-            var result = await service.GetSalesSummaryAsync(CancellationToken.None);
+            var result = await _service.GetSalesSummaryAsync(
+                cancellationToken);
 
             // Assert
             Assert.IsNotNull(result);
             Assert.HasCount(0, result);
+
+            _eventRepository.Verify(
+                x => x.GetSalesSummaryAsync(cancellationToken),
+                Times.Once);
         }
 
         [TestMethod]
-        public async Task GetSalesSummaryAsync_WhenEventsHaveNoTickets_ReturnsZeroSales()
+        public async Task GetSalesSummaryAsync_WhenRepositoryReturnsResults_ReturnsResults()
         {
             // Arrange
-            var events = new List<Event>
+            var cancellationToken = CancellationToken.None;
+
+            var expected = new List<SalesSummaryResponse>
             {
-                new Event
+                new SalesSummaryResponse
                 {
-                    Id = Guid.NewGuid(),
-                    Name = "Tech Expo",
-                    Tickets = new List<Ticket>() // No tickets
+                    EventName = "Music Fest",
+                    TicketsSold = 5,
+                    Revenue = 650
                 }
-            }.BuildMockDbSet();
+            };
 
-            var mockDb = new Mock<ITicketingDbContext>();
-            mockDb.Setup(x => x.Events).Returns(events.Object);
-
-            var service = new ReportService(mockDb.Object);
+            _eventRepository
+                .Setup(x => x.GetSalesSummaryAsync(cancellationToken))
+                .ReturnsAsync(expected);
 
             // Act
-            var result = await service.GetSalesSummaryAsync(CancellationToken.None);
+            var result = await _service.GetSalesSummaryAsync(
+                cancellationToken);
 
             // Assert
+            Assert.IsNotNull(result);
             Assert.HasCount(1, result);
-            Assert.AreEqual(0, result[0].TicketsSold);
-            Assert.AreEqual(0, result[0].Revenue);
+
+            Assert.AreEqual("Music Fest", result[0].EventName);
+            Assert.AreEqual(5, result[0].TicketsSold);
+            Assert.AreEqual(650, result[0].Revenue);
+
+            _eventRepository.Verify(
+                x => x.GetSalesSummaryAsync(cancellationToken),
+                Times.Once);
         }
 
         [TestMethod]
-        public async Task GetSalesSummaryAsync_WhenEventsHaveTickets_ComputesCorrectTotals()
+        public async Task GetSalesSummaryAsync_WhenRepositoryReturnsMultipleResults_ReturnsSameResults()
         {
             // Arrange
-            var eventId = Guid.NewGuid();
+            var cancellationToken = CancellationToken.None;
 
-            var events = new List<Event>
+            var expected = new List<SalesSummaryResponse>
             {
-                new Event
+                new SalesSummaryResponse
                 {
-                    Id = eventId,
-                    Name = "Music Fest",
-                    Tickets = new List<Ticket>
-                    {
-                        new Ticket (2, 100),
-                        new Ticket(3, 150)
-                    }
-                }
-            }.BuildMockDbSet();
-
-            var mockDb = new Mock<ITicketingDbContext>();
-            mockDb.Setup(x => x.Events).Returns(events.Object);
-
-            var service = new ReportService(mockDb.Object);
-
-            // Act
-            var result = await service.GetSalesSummaryAsync(CancellationToken.None);
-
-            // Assert
-            Assert.HasCount(1, result);
-            Assert.AreEqual(5, result[0].TicketsSold);      // 2 + 3
-            Assert.AreEqual(650, result[0].Revenue);        // 200 + 450
-        }
-
-        [TestMethod]
-        public async Task GetSalesSummaryAsync_WhenMultipleEvents_ReturnsOrderedByRevenue()
-        {
-            // Arrange
-            var events = new List<Event>
-            {
-                new Event
-                {
-                    Id = Guid.NewGuid(),
-                    Name = "Event A",
-                    Tickets = new List<Ticket>
-                    {
-                        new Ticket(1, 100)
-                    }
+                    EventName = "Event B",
+                    TicketsSold = 5,
+                    Revenue = 500
                 },
-                new Event
+                new SalesSummaryResponse
                 {
-                    Id = Guid.NewGuid(),
-                    Name = "Event B",
-                    Tickets = new List<Ticket>
-                    {
-                        new Ticket(5, 100)
-                    }
+                    EventName = "Event A",
+                    TicketsSold = 1,
+                    Revenue = 100
                 }
-            }.BuildMockDbSet();
+            };
 
-            var mockDb = new Mock<ITicketingDbContext>();
-            mockDb.Setup(x => x.Events).Returns(events.Object);
-
-            var service = new ReportService(mockDb.Object);
+            _eventRepository
+                .Setup(x => x.GetSalesSummaryAsync(cancellationToken))
+                .ReturnsAsync(expected);
 
             // Act
-            var result = await service.GetSalesSummaryAsync(CancellationToken.None);
+            var result = await _service.GetSalesSummaryAsync(
+                cancellationToken);
 
             // Assert
             Assert.HasCount(2, result);
 
-            // Event B should come first (higher revenue)
             Assert.AreEqual("Event B", result[0].EventName);
+            Assert.AreEqual(5, result[0].TicketsSold);
             Assert.AreEqual(500, result[0].Revenue);
 
             Assert.AreEqual("Event A", result[1].EventName);
+            Assert.AreEqual(1, result[1].TicketsSold);
             Assert.AreEqual(100, result[1].Revenue);
+
+            _eventRepository.Verify(
+                x => x.GetSalesSummaryAsync(cancellationToken),
+                Times.Once);
+        }
+
+        [TestMethod]
+        public async Task GetSalesSummaryAsync_PassesCancellationTokenToRepository()
+        {
+            // Arrange
+            using var cancellationTokenSource =
+                new CancellationTokenSource();
+
+            var cancellationToken = cancellationTokenSource.Token;
+
+            var expected = new List<SalesSummaryResponse>();
+
+            _eventRepository
+                .Setup(x => x.GetSalesSummaryAsync(cancellationToken))
+                .ReturnsAsync(expected);
+
+            // Act
+            var result = await _service.GetSalesSummaryAsync(
+                cancellationToken);
+
+            // Assert
+            Assert.IsNotNull(result);
+
+            _eventRepository.Verify(
+                x => x.GetSalesSummaryAsync(cancellationToken),
+                Times.Once);
+        }
+
+        [TestMethod]
+        public async Task GetSalesSummaryAsync_WhenRepositoryReturnsList_ReturnsSameList()
+        {
+            // Arrange
+            var cancellationToken = CancellationToken.None;
+
+            var expected = new List<SalesSummaryResponse>
+            {
+                new SalesSummaryResponse
+                {
+                    EventName = "Tech Expo",
+                    TicketsSold = 10,
+                    Revenue = 1000
+                }
+            };
+
+            _eventRepository
+                .Setup(x => x.GetSalesSummaryAsync(cancellationToken))
+                .ReturnsAsync(expected);
+
+            // Act
+            var result = await _service.GetSalesSummaryAsync(
+                cancellationToken);
+
+            // Assert
+            Assert.AreSame(expected, result);
         }
     }
 }

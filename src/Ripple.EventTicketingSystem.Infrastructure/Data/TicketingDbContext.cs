@@ -1,6 +1,4 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
-using Ripple.EventTicketingSystem.Application.Interfaces;
 using Ripple.EventTicketingSystem.Domain.Models;
 using System;
 using System.Collections.Generic;
@@ -8,7 +6,7 @@ using System.Text;
 
 namespace Ripple.EventTicketingSystem.Infrastructure.Data
 {
-    public class TicketingDbContext : DbContext, ITicketingDbContext
+    public class TicketingDbContext : DbContext
     {
         public TicketingDbContext(
             DbContextOptions<TicketingDbContext> options)
@@ -21,12 +19,7 @@ namespace Ripple.EventTicketingSystem.Infrastructure.Data
         public DbSet<PricingTier> PricingTiers => Set<PricingTier>();
 
         public DbSet<Ticket> Tickets => Set<Ticket>();
-        public Task<IDbContextTransaction> BeginTransactionAsync(
-        CancellationToken cancellationToken = default)
-        {
-            return Database.BeginTransactionAsync(cancellationToken);
-        }
-
+        
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);

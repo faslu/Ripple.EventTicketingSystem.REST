@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Ripple.EventTicketingSystem.Application.DTOs.Events;
 using Ripple.EventTicketingSystem.Application.Interfaces;
 

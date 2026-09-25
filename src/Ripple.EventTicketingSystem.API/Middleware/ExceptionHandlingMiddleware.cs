@@ -37,6 +37,13 @@ public class ExceptionHandlingMiddleware
                 ex.Message,
                 HttpStatusCode.Conflict);
         }
+        catch (ValidationException ex)
+        {
+            await HandleExceptionAsync(
+                context,
+                ex.Message,
+                HttpStatusCode.BadRequest);
+        }
         catch (Exception ex)
         {
             _logger.LogError(

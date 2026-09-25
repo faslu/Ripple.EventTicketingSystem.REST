@@ -1,45 +1,135 @@
 ﻿using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage;
-using MockQueryable.Moq;
+using Microsoft.Extensions.Options;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using Ripple.EventTicketingSystem.Application.DTOs.Tickets;
 using Ripple.EventTicketingSystem.Application.Interfaces;
+using Ripple.EventTicketingSystem.Application.Options;
 using Ripple.EventTicketingSystem.Application.Services;
 using Ripple.EventTicketingSystem.Domain.Exceptions;
 using Ripple.EventTicketingSystem.Domain.Models;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace Ripple.EventTicketingSystem.Application.Tests.Services;
 
 [TestClass]
 public class TicketServiceTests
 {
+    private Mock<IUnitOfWork> _unitOfWork = null!;
+    private Mock<IEventRepository> _eventRepository = null!;
+    private Mock<IPricingTierRepository> _pricingTierRepository = null!;
+    private Mock<ITicketRepository> _ticketRepository = null!;
+    private TicketService _service = null!;
+
+    [TestInitialize]
+    public void TestInitialize()
+    {
+        _unitOfWork = new Mock<IUnitOfWork>();
+        _eventRepository = new Mock<IEventRepository>();
+        _pricingTierRepository = new Mock<IPricingTierRepository>();
+        _ticketRepository = new Mock<ITicketRepository>();
+
+        _unitOfWork
+            .SetupGet(x => x.Events)
+            .Returns(_eventRepository.Object);
+
+        _unitOfWork
+            .SetupGet(x => x.PricingTiers)
+            .Returns(_pricingTierRepository.Object);
+
+        _unitOfWork
+            .SetupGet(x => x.Tickets)
+            .Returns(_ticketRepository.Object);
+
+        _unitOfWork
+            .Setup(x => x.SaveChangesAsync(
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);
+
+        // Execute the supplied operation immediately.
+        // Transaction behavior itself is tested in UnitOfWorkTests.
+        _unitOfWork
+            .Setup(x => x.ExecuteInTransactionAsync(
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<Func<CancellationToken, Task>, CancellationToken>(
+                async (operation, cancellationToken) =>
+                {
+                    await operation(cancellationToken);
+                });
+
+        var options = Microsoft.Extensions.Options.Options.Create(
+            new TicketingOptions
+            {
+                MaxTicketsPerPurchase = 10
+            });
+
+        _service = new TicketService(
+            _unitOfWork.Object,
+            options);
+    }
+
     [TestMethod]
     public async Task PurchaseAsync_WhenEventDoesNotExist_ThrowsNotFoundException()
     {
         // Arrange
-        var mockDb = new Mock<ITicketingDbContext>();
+        var eventId = Guid.NewGuid();
 
-        mockDb.Setup(x => x.Events)
-            .Returns(new List<Event>()
-                .BuildMockDbSet()
-                .Object);
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
 
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = Guid.NewGuid(),
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest();
 
         // Act & Assert
         await Assert.ThrowsExactlyAsync<NotFoundException>(
-            () => service.PurchaseAsync(
-                Guid.NewGuid(),
+            () => _service.PurchaseAsync(
+                eventId,
                 request,
                 CancellationToken.None));
+
+        _eventRepository.Verify(
+            x => x.ExistsAsync(
+                eventId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _pricingTierRepository.Verify(
+            x => x.GetForEventAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [TestMethod]
+    public async Task PurchaseAsync_WhenQuantityExceedsMaximum_ThrowsValidationException()
+    {
+        // Arrange
+        var eventId = Guid.NewGuid();
+
+        var request = CreatePurchaseRequest(
+            quantity: 11);
+
+        // Act & Assert
+        var exception =
+            await Assert.ThrowsExactlyAsync<ValidationException>(
+                () => _service.PurchaseAsync(
+                    eventId,
+                    request,
+                    CancellationToken.None));
+
+        Assert.AreEqual(
+            "You can purchase a maximum of 10 tickets per purchase.",
+            exception.Message);
+
+        _eventRepository.Verify(
+            x => x.ExistsAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [TestMethod]
@@ -47,52 +137,41 @@ public class TicketServiceTests
     {
         // Arrange
         var eventId = Guid.NewGuid();
+        var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId,
-                Name = "Music Festival"
-            }
-        }.BuildMockDbSet();
-
-        var pricingTiers = new List<PricingTier>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
+                eventId,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
+            .ReturnsAsync(true);
 
-        var service = new TicketService(mockDb.Object);
+        _pricingTierRepository
+            .Setup(x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PricingTier?)null);
 
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = Guid.NewGuid(),
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId);
 
         // Act & Assert
         await Assert.ThrowsExactlyAsync<NotFoundException>(
-            () => service.PurchaseAsync(
+            () => _service.PurchaseAsync(
                 eventId,
                 request,
                 CancellationToken.None));
 
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
+        _pricingTierRepository.Verify(
+            x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _unitOfWork.Verify(
+            x => x.SaveChangesAsync(
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -104,62 +183,37 @@ public class TicketServiceTests
         var anotherEventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId,
-                Name = "Music Festival"
-            }
-        }.BuildMockDbSet();
-
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = anotherEventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 50
-            }
-        }.BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
+                eventId,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
+            .ReturnsAsync(true);
 
-        var service = new TicketService(mockDb.Object);
+        // The repository is expected to enforce the event/tier relationship
+        // and return null when the tier does not belong to the event.
+        _pricingTierRepository
+            .Setup(x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PricingTier?)null);
 
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId);
 
         // Act & Assert
         await Assert.ThrowsExactlyAsync<NotFoundException>(
-            () => service.PurchaseAsync(
+            () => _service.PurchaseAsync(
                 eventId,
                 request,
                 CancellationToken.None));
 
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
+        _pricingTierRepository.Verify(
+            x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [TestMethod]
@@ -169,61 +223,52 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId,
-                Name = "Music Festival"
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 2,
+            price: 200m);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "VIP",
-                Price = 200m,
-                Capacity = 100,
-                AvailableQuantity = 2
-            }
-        }.BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
+                eventId,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
+            .ReturnsAsync(true);
 
-        var service = new TicketService(mockDb.Object);
+        _pricingTierRepository
+            .Setup(x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tier);
 
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 5,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 5);
 
         // Act & Assert
-        await Assert.ThrowsExactlyAsync<ConflictException>(
-            () => service.PurchaseAsync(
-                eventId,
-                request,
-                CancellationToken.None));
+        var exception =
+            await Assert.ThrowsExactlyAsync<ConflictException>(
+                () => _service.PurchaseAsync(
+                    eventId,
+                    request,
+                    CancellationToken.None));
 
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
+        Assert.AreEqual(
+            "Only 2 tickets are available.",
+            exception.Message);
+
+        Assert.AreEqual(
+            2,
+            tier.AvailableQuantity);
+
+        _ticketRepository.Verify(
+            x => x.Add(It.IsAny<Ticket>()),
+            Times.Never);
+
+        _unitOfWork.Verify(
+            x => x.SaveChangesAsync(
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -234,64 +279,23 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId,
-                Name = "Music Festival"
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 2,
+            price: 100m);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 10,
-                AvailableQuantity = 2
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 2,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 2);
 
         // Act
-        var result = await service.PurchaseAsync(
+        var result = await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
@@ -299,10 +303,21 @@ public class TicketServiceTests
         // Assert
         Assert.IsNotNull(result);
         Assert.AreEqual(2, result.Quantity);
-        Assert.AreEqual(0, pricingTiers.Object.First().AvailableQuantity);
+        Assert.AreEqual(0, tier.AvailableQuantity);
 
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
+        _ticketRepository.Verify(
+            x => x.Add(It.IsAny<Ticket>()),
+            Times.Once);
+
+        _unitOfWork.Verify(
+            x => x.SaveChangesAsync(
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _unitOfWork.Verify(
+            x => x.ExecuteInTransactionAsync(
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -313,64 +328,26 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId,
-                Name = "Music Festival"
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 100m,
+            name: "Standard");
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 2,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 2,
+            customerName: "John",
+            customerEmail: "john@example.com");
 
         // Act
-        var result = await service.PurchaseAsync(
+        var result = await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
@@ -398,70 +375,37 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 75m);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 75m,
-                Capacity = 50,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 1,
-            CustomerName = "  John Smith  ",
-            CustomerEmail = "  john@example.com  "
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 1,
+            customerName: "  John Smith  ",
+            customerEmail: "  john@example.com  ");
 
         // Act
-        var result = await service.PurchaseAsync(
+        var result = await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
 
         // Assert
-        Assert.AreEqual("John Smith", result.CustomerName);
-        Assert.AreEqual("john@example.com", result.CustomerEmail);
+        Assert.AreEqual(
+            "John Smith",
+            result.CustomerName);
+
+        Assert.AreEqual(
+            "john@example.com",
+            result.CustomerEmail);
     }
 
     [TestMethod]
@@ -471,71 +415,35 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 20,
+            price: 250m,
+            name: "VIP");
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "VIP",
-                Price = 250m,
-                Capacity = 100,
-                AvailableQuantity = 20
-            }
-        }.BuildMockDbSet();
-
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
         Ticket? addedTicket = null;
 
-        tickets.Setup(x => x.Add(It.IsAny<Ticket>()))
+        _ticketRepository
+            .Setup(x => x.Add(It.IsAny<Ticket>()))
             .Callback<Ticket>(ticket =>
             {
                 addedTicket = ticket;
             });
 
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 3,
-            CustomerName = "Jane Smith",
-            CustomerEmail = "jane@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 3,
+            customerName: "Jane Smith",
+            customerEmail: "jane@example.com");
 
         // Act
-        await service.PurchaseAsync(
+        await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
@@ -550,7 +458,10 @@ public class TicketServiceTests
         Assert.AreEqual("jane@example.com", addedTicket.CustomerEmail);
         Assert.AreEqual(250m, addedTicket.UnitPrice);
 
-        tickets.Verify(
+        Assert.AreNotEqual(Guid.Empty, addedTicket.Id);
+        Assert.AreNotEqual(default, addedTicket.PurchaseDate);
+
+        _ticketRepository.Verify(
             x => x.Add(It.IsAny<Ticket>()),
             Times.Once);
     }
@@ -562,71 +473,31 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var tier = new PricingTier
-        {
-            Id = tierId,
-            EventId = eventId,
-            Name = "Standard",
-            Price = 100m,
-            Capacity = 100,
-            AvailableQuantity = 10
-        };
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 100m);
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            tier
-        }.BuildMockDbSet();
-
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 4,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 4);
 
         // Act
-        await service.PurchaseAsync(
+        await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
 
         // Assert
-        Assert.AreEqual(6, tier.AvailableQuantity);
+        Assert.AreEqual(
+            6,
+            tier.AvailableQuantity);
     }
 
     [TestMethod]
@@ -636,323 +507,157 @@ public class TicketServiceTests
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 100m);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 1);
 
         // Act
-        await service.PurchaseAsync(
+        await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
 
         // Assert
-        mockDb.Verify(
-            x => x.SaveChangesAsync(It.IsAny<CancellationToken>()),
+        _unitOfWork.Verify(
+            x => x.SaveChangesAsync(
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [TestMethod]
-    public async Task PurchaseAsync_WhenValid_CommitsTransaction()
+    public async Task PurchaseAsync_WhenValid_ExecutesOperationInTransaction()
     {
         // Arrange
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 100m);
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
+        SetupSuccessfulPurchase(
+            eventId,
+            tierId,
+            tier);
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(1);
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 2,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 2);
 
         // Act
-        await service.PurchaseAsync(
+        await _service.PurchaseAsync(
             eventId,
             request,
             CancellationToken.None);
 
         // Assert
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
+        _unitOfWork.Verify(
+            x => x.ExecuteInTransactionAsync(
+                It.IsAny<Func<CancellationToken, Task>>(),
+                It.IsAny<CancellationToken>()),
             Times.Once);
-
-        transaction.Verify(
-            x => x.RollbackAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
     }
 
     [TestMethod]
-    public async Task PurchaseAsync_WhenConcurrencyExceptionOccurs_ThrowsConflictException()
+    public async Task PurchaseAsync_WhenCancellationTokenProvided_PassesItToRepository()
     {
         // Arrange
         var eventId = Guid.NewGuid();
         var tierId = Guid.NewGuid();
 
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
+        using var cancellationTokenSource =
+            new CancellationTokenSource();
 
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
+        var cancellationToken =
+            cancellationTokenSource.Token;
 
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
+        var tier = CreatePricingTier(
+            eventId,
+            tierId,
+            availableQuantity: 10,
+            price: 100m);
 
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        // The concurrency exception should happen here.
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new DbUpdateConcurrencyException());
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
-
-        // Act & Assert
-        await Assert.ThrowsExactlyAsync<ConflictException>(
-            () => service.PurchaseAsync(
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
                 eventId,
-                request,
-                CancellationToken.None));
+                cancellationToken))
+            .ReturnsAsync(true);
 
-        transaction.Verify(
-            x => x.RollbackAsync(It.IsAny<CancellationToken>()),
-            Times.Once);
+        _pricingTierRepository
+            .Setup(x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                cancellationToken))
+            .ReturnsAsync(tier);
 
-        transaction.Verify(
-            x => x.CommitAsync(It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    [TestMethod]
-    public async Task PurchaseAsync_WhenConcurrencyExceptionOccurs_ReturnsExpectedConflictMessage()
-    {
-        // Arrange
-        var eventId = Guid.NewGuid();
-        var tierId = Guid.NewGuid();
-
-        var events = new List<Event>
-        {
-            new Event
-            {
-                Id = eventId
-            }
-        }.BuildMockDbSet();
-
-        var pricingTiers = new List<PricingTier>
-        {
-            new PricingTier
-            {
-                Id = tierId,
-                EventId = eventId,
-                Name = "Standard",
-                Price = 100m,
-                Capacity = 100,
-                AvailableQuantity = 10
-            }
-        }.BuildMockDbSet();
-
-        var tickets = new List<Ticket>()
-            .BuildMockDbSet();
-
-        var transaction = new Mock<IDbContextTransaction>();
-
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        mockDb.Setup(x => x.PricingTiers)
-            .Returns(pricingTiers.Object);
-
-        mockDb.Setup(x => x.Tickets)
-            .Returns(tickets.Object);
-
-        mockDb.Setup(x => x.BeginTransactionAsync(
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(transaction.Object);
-
-        mockDb.Setup(x => x.SaveChangesAsync(
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new DbUpdateConcurrencyException());
-
-        var service = new TicketService(mockDb.Object);
-
-        var request = new PurchaseTicketRequest
-        {
-            PricingTierId = tierId,
-            Quantity = 1,
-            CustomerName = "John",
-            CustomerEmail = "john@example.com"
-        };
+        var request = CreatePurchaseRequest(
+            pricingTierId: tierId,
+            quantity: 1);
 
         // Act
-        var exception = await Assert.ThrowsExactlyAsync<ConflictException>(
-            () => service.PurchaseAsync(
-                eventId,
-                request,
-                CancellationToken.None));
+        await _service.PurchaseAsync(
+            eventId,
+            request,
+            cancellationToken);
 
         // Assert
-        Assert.AreEqual(
-            "The tickets were purchased by another customer. Please try again.",
-            exception.Message);
+        _eventRepository.Verify(
+            x => x.ExistsAsync(
+                eventId,
+                cancellationToken),
+            Times.Once);
+
+        _pricingTierRepository.Verify(
+            x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                cancellationToken),
+            Times.Once);
+
+        _unitOfWork.Verify(
+            x => x.SaveChangesAsync(
+                cancellationToken),
+            Times.Once);
     }
 
     [TestMethod]
     public async Task GetAvailabilityAsync_WhenEventDoesNotExist_ThrowsNotFoundException()
     {
         // Arrange
-        var mockDb = new Mock<ITicketingDbContext>();
+        var eventId = Guid.NewGuid();
 
-        mockDb.Setup(x => x.Events)
-            .Returns(new List<Event>()
-                .BuildMockDbSet()
-                .Object);
-
-        var service = new TicketService(mockDb.Object);
+        _eventRepository
+            .Setup(x => x.GetByIdAsync(
+                eventId,
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Event?)null);
 
         // Act & Assert
         await Assert.ThrowsExactlyAsync<NotFoundException>(
-            () => service.GetAvailabilityAsync(
-                Guid.NewGuid(),
+            () => _service.GetAvailabilityAsync(
+                eventId,
                 CancellationToken.None));
+
+        _eventRepository.Verify(
+            x => x.GetByIdAsync(
+                eventId,
+                true,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [TestMethod]
@@ -961,54 +666,54 @@ public class TicketServiceTests
         // Arrange
         var eventId = Guid.NewGuid();
 
-        var events = new List<Event>
+        var eventEntity = new Event
         {
-            new Event
+            Id = eventId,
+            Name = "Tech Expo",
+            TotalCapacity = 300,
+            PricingTiers = new List<PricingTier>
             {
-                Id = eventId,
-                Name = "Tech Expo",
-                TotalCapacity = 300,
-                PricingTiers = new List<PricingTier>
-                {
-                    new PricingTier
-                    {
-                        Id = Guid.NewGuid(),
-                        EventId = eventId,
-                        Name = "VIP",
-                        Price = 300m,
-                        Capacity = 100,
-                        AvailableQuantity = 20
-                    },
-                    new PricingTier
-                    {
-                        Id = Guid.NewGuid(),
-                        EventId = eventId,
-                        Name = "Standard",
-                        Price = 100m,
-                        Capacity = 200,
-                        AvailableQuantity = 150
-                    }
-                }
+                CreatePricingTier(
+                    eventId,
+                    Guid.NewGuid(),
+                    availableQuantity: 20,
+                    price: 300m,
+                    name: "VIP",
+                    capacity: 100),
+
+                CreatePricingTier(
+                    eventId,
+                    Guid.NewGuid(),
+                    availableQuantity: 150,
+                    price: 100m,
+                    name: "Standard",
+                    capacity: 200)
             }
-        }.BuildMockDbSet();
+        };
 
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        var service = new TicketService(mockDb.Object);
+        SetupEventForAvailability(
+            eventId,
+            eventEntity);
 
         // Act
-        var result = await service.GetAvailabilityAsync(
+        var result = await _service.GetAvailabilityAsync(
             eventId,
             CancellationToken.None);
 
         // Assert
         Assert.IsNotNull(result);
-        Assert.AreEqual(eventId, result.EventId);
-        Assert.AreEqual("Tech Expo", result.EventName);
-        Assert.AreEqual(300, result.TotalCapacity);
+
+        Assert.AreEqual(
+            eventId,
+            result.EventId);
+
+        Assert.AreEqual(
+            "Tech Expo",
+            result.EventName);
+
+        Assert.AreEqual(
+            300,
+            result.TotalCapacity);
     }
 
     [TestMethod]
@@ -1017,51 +722,44 @@ public class TicketServiceTests
         // Arrange
         var eventId = Guid.NewGuid();
 
-        var events = new List<Event>
+        var eventEntity = new Event
         {
-            new Event
+            Id = eventId,
+            Name = "Tech Expo",
+            TotalCapacity = 300,
+            PricingTiers = new List<PricingTier>
             {
-                Id = eventId,
-                Name = "Tech Expo",
-                TotalCapacity = 300,
-                PricingTiers = new List<PricingTier>
-                {
-                    new PricingTier
-                    {
-                        Id = Guid.NewGuid(),
-                        EventId = eventId,
-                        Name = "VIP",
-                        Price = 300m,
-                        Capacity = 100,
-                        AvailableQuantity = 20
-                    },
-                    new PricingTier
-                    {
-                        Id = Guid.NewGuid(),
-                        EventId = eventId,
-                        Name = "Standard",
-                        Price = 100m,
-                        Capacity = 200,
-                        AvailableQuantity = 150
-                    }
-                }
+                CreatePricingTier(
+                    eventId,
+                    Guid.NewGuid(),
+                    availableQuantity: 20,
+                    price: 300m,
+                    name: "VIP",
+                    capacity: 100),
+
+                CreatePricingTier(
+                    eventId,
+                    Guid.NewGuid(),
+                    availableQuantity: 150,
+                    price: 100m,
+                    name: "Standard",
+                    capacity: 200)
             }
-        }.BuildMockDbSet();
+        };
 
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        var service = new TicketService(mockDb.Object);
+        SetupEventForAvailability(
+            eventId,
+            eventEntity);
 
         // Act
-        var result = await service.GetAvailabilityAsync(
+        var result = await _service.GetAvailabilityAsync(
             eventId,
             CancellationToken.None);
 
         // Assert
-        Assert.AreEqual(170, result.TotalAvailable);
+        Assert.AreEqual(
+            170,
+            result.TotalAvailable);
     }
 
     [TestMethod]
@@ -1073,46 +771,37 @@ public class TicketServiceTests
         var vipTierId = Guid.NewGuid();
         var standardTierId = Guid.NewGuid();
 
-        var events = new List<Event>
+        var eventEntity = new Event
         {
-            new Event
+            Id = eventId,
+            Name = "Tech Expo",
+            TotalCapacity = 300,
+            PricingTiers = new List<PricingTier>
             {
-                Id = eventId,
-                Name = "Tech Expo",
-                TotalCapacity = 300,
-                PricingTiers = new List<PricingTier>
-                {
-                    new PricingTier
-                    {
-                        Id = vipTierId,
-                        EventId = eventId,
-                        Name = "VIP",
-                        Price = 300m,
-                        Capacity = 100,
-                        AvailableQuantity = 20
-                    },
-                    new PricingTier
-                    {
-                        Id = standardTierId,
-                        EventId = eventId,
-                        Name = "Standard",
-                        Price = 100m,
-                        Capacity = 200,
-                        AvailableQuantity = 150
-                    }
-                }
+                CreatePricingTier(
+                    eventId,
+                    vipTierId,
+                    availableQuantity: 20,
+                    price: 300m,
+                    name: "VIP",
+                    capacity: 100),
+
+                CreatePricingTier(
+                    eventId,
+                    standardTierId,
+                    availableQuantity: 150,
+                    price: 100m,
+                    name: "Standard",
+                    capacity: 200)
             }
-        }.BuildMockDbSet();
+        };
 
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        var service = new TicketService(mockDb.Object);
+        SetupEventForAvailability(
+            eventId,
+            eventEntity);
 
         // Act
-        var result = await service.GetAvailabilityAsync(
+        var result = await _service.GetAvailabilityAsync(
             eventId,
             CancellationToken.None);
 
@@ -1123,18 +812,40 @@ public class TicketServiceTests
         var vip = result.PricingTiers
             .Single(x => x.PricingTierId == vipTierId);
 
-        Assert.AreEqual("VIP", vip.Name);
-        Assert.AreEqual(300m, vip.Price);
-        Assert.AreEqual(100, vip.Capacity);
-        Assert.AreEqual(20, vip.AvailableQuantity);
+        Assert.AreEqual(
+            "VIP",
+            vip.Name);
+
+        Assert.AreEqual(
+            300m,
+            vip.Price);
+
+        Assert.AreEqual(
+            100,
+            vip.Capacity);
+
+        Assert.AreEqual(
+            20,
+            vip.AvailableQuantity);
 
         var standard = result.PricingTiers
             .Single(x => x.PricingTierId == standardTierId);
 
-        Assert.AreEqual("Standard", standard.Name);
-        Assert.AreEqual(100m, standard.Price);
-        Assert.AreEqual(200, standard.Capacity);
-        Assert.AreEqual(150, standard.AvailableQuantity);
+        Assert.AreEqual(
+            "Standard",
+            standard.Name);
+
+        Assert.AreEqual(
+            100m,
+            standard.Price);
+
+        Assert.AreEqual(
+            200,
+            standard.Capacity);
+
+        Assert.AreEqual(
+            150,
+            standard.AvailableQuantity);
     }
 
     [TestMethod]
@@ -1143,45 +854,108 @@ public class TicketServiceTests
         // Arrange
         var eventId = Guid.NewGuid();
 
-        var events = new List<Event>
+        var eventEntity = new Event
         {
-            new Event
+            Id = eventId,
+            Name = "Sold Out Event",
+            TotalCapacity = 200,
+            PricingTiers = new List<PricingTier>
             {
-                Id = eventId,
-                Name = "Sold Out Event",
-                TotalCapacity = 200,
-                PricingTiers = new List<PricingTier>
-                {
-                    new PricingTier
-                    {
-                        Id = Guid.NewGuid(),
-                        EventId = eventId,
-                        Name = "Standard",
-                        Price = 100m,
-                        Capacity = 200,
-                        AvailableQuantity = 0
-                    }
-                }
+                CreatePricingTier(
+                    eventId,
+                    Guid.NewGuid(),
+                    availableQuantity: 0,
+                    price: 100m,
+                    name: "Standard",
+                    capacity: 200)
             }
-        }.BuildMockDbSet();
+        };
 
-        var mockDb = new Mock<ITicketingDbContext>();
-
-        mockDb.Setup(x => x.Events)
-            .Returns(events.Object);
-
-        var service = new TicketService(mockDb.Object);
+        SetupEventForAvailability(
+            eventId,
+            eventEntity);
 
         // Act
-        var result = await service.GetAvailabilityAsync(
+        var result = await _service.GetAvailabilityAsync(
             eventId,
             CancellationToken.None);
 
         // Assert
-        Assert.AreEqual(0, result.TotalAvailable);
-        Assert.HasCount(1, result.PricingTiers);
+        Assert.AreEqual(
+            0,
+            result.TotalAvailable);
+
+        Assert.HasCount(
+            1,
+            result.PricingTiers);
+
         Assert.AreEqual(
             0,
             result.PricingTiers[0].AvailableQuantity);
+    }
+
+    private void SetupSuccessfulPurchase(
+        Guid eventId,
+        Guid tierId,
+        PricingTier tier)
+    {
+        _eventRepository
+            .Setup(x => x.ExistsAsync(
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        _pricingTierRepository
+            .Setup(x => x.GetForEventAsync(
+                tierId,
+                eventId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(tier);
+    }
+
+    private void SetupEventForAvailability(
+        Guid eventId,
+        Event eventEntity)
+    {
+        _eventRepository
+            .Setup(x => x.GetByIdAsync(
+                eventId,
+                true,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(eventEntity);
+    }
+
+    private static PurchaseTicketRequest CreatePurchaseRequest(
+        Guid? pricingTierId = null,
+        int quantity = 1,
+        string customerName = "John",
+        string customerEmail = "john@example.com")
+    {
+        return new PurchaseTicketRequest
+        {
+            PricingTierId = pricingTierId ?? Guid.NewGuid(),
+            Quantity = quantity,
+            CustomerName = customerName,
+            CustomerEmail = customerEmail
+        };
+    }
+
+    private static PricingTier CreatePricingTier(
+        Guid eventId,
+        Guid tierId,
+        int availableQuantity,
+        decimal price,
+        string name = "Standard",
+        int capacity = 100)
+    {
+        return new PricingTier
+        {
+            Id = tierId,
+            EventId = eventId,
+            Name = name,
+            Price = price,
+            Capacity = capacity,
+            AvailableQuantity = availableQuantity
+        };
     }
 }

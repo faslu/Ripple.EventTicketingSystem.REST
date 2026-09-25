@@ -2,8 +2,7 @@
 
 A RESTful event ticketing system built with **.NET 10**, **ASP.NET Core Web API**, **Entity Framework Core 10**, and **SQL Server**.
 
-The application provides event management, ticket purchasing with inventory control, event availability, and sales reporting.
-
+---
 
 # Technology Stack
 
@@ -21,83 +20,122 @@ The application provides event management, ticket purchasing with inventory cont
 
 # Solution Structure
 
-```
+```text
 Ripple.EventTicketingSystem
 │
 ├── Ripple.EventTicketingSystem.API
+│   │
 │   ├── Controllers
 │   │   ├── EventsController.cs
 │   │   ├── TicketsController.cs
 │   │   └── ReportsController.cs
+│   │
 │   ├── Middleware
+│   │   └── ExceptionHandlingMiddleware.cs
+│   │
+│   ├── appsettings.json
+│   ├── appsettings.Development.json
 │   └── Program.cs
 │
 ├── Ripple.EventTicketingSystem.Application
+│   │
 │   ├── DTOs
+│   │   ├── Events
+│   │   ├── Tickets
+│   │   └── Reports
+│   │
 │   ├── Interfaces
+│   │   ├── IEventRepository.cs
+│   │   ├── IPricingTierRepository.cs
+│   │   ├── ITicketRepository.cs
+│   │   ├── IUnitOfWork.cs
+│   │   └── ITicketingDbContext.cs
+│   │
+│   ├── Options
+│   │   └── TicketingOptions.cs
+│   │
 │   └── Services
 │       ├── EventService.cs
 │       ├── TicketService.cs
 │       └── ReportService.cs
 │
 ├── Ripple.EventTicketingSystem.Domain
+│   │
 │   ├── Models
 │   │   ├── Event.cs
 │   │   ├── PricingTier.cs
 │   │   └── Ticket.cs
+│   │
 │   └── Exceptions
+│       └── ...
 │
-├── Ripple.EventTicketingSystem.DBContext
-│   └── Data
-│       └── TicketingDbContext.cs
+├── Ripple.EventTicketingSystem.Infrastructure
+│   │
+│   ├── Data
+│   │   └── TicketingDbContext.cs
+│   │
+│   └── Repositories
+│       ├── EventRepository.cs
+│       ├── PricingTierRepository.cs
+│       └── TicketRepository.cs
 │
-└── Tests
-    └── Ripple.EventTicketingSystem.Application.Tests
-        └── Services
-            ├── EventServiceTests.cs
-            ├── TicketServiceTests.cs
-            └── ReportServiceTests.cs
+├── Ripple.EventTicketingSystem.Application.Tests
+│   │
+│   └── Services
+│       ├── EventServiceTests.cs
+│       ├── TicketServiceTests.cs
+│       └── ReportServiceTests.cs
+│
+└── Ripple.EventTicketingSystem.Infrastructure.Tests
+    │
+    └── Repositories
+        ├── EventRepositoryTests.cs
+        ├── PricingTierRepositoryTests.cs
+        └── TicketRepositoryTests.cs
 ```
-
-## Architecture
-
-The solution follows a layered architecture:
-
-```text
-API
- │
- ▼
-Application
- │
- ▼
-Domain
-
-DBContext ───────────────┘
-```
-
-
-
-### DBContext
-
-Contains:
-
-* Entity Framework Core DbContext
-* SQL Server configuration
-* Entity mappings
-* Database-specific configuration
-
-`ITicketingDbContext` is defined in the Application layer and implemented by `TicketingDbContext`. This keeps database implementation details out of the Application layer.
 
 ---
+
+# Architecture
+
+The solution follows a layered architecture with clear separation of responsibilities.
+
+```text
+                    ┌──────────────────────┐
+                    │         API          │
+                    │ Controllers/Middleware│
+                    └──────────┬───────────┘
+                               │
+                               ▼
+                    ┌──────────────────────┐
+                    │    Application       │
+                    │ Services / DTOs /     │
+                    │ Interfaces / Options  │
+                    └──────────┬───────────┘
+                               │
+                  ┌────────────┴────────────┐
+                  │                         │
+                  ▼                         ▼
+        ┌──────────────────┐      ┌──────────────────┐
+        │      Domain      │      │  Infrastructure  │
+        │ Models/Exceptions│      │ DbContext/       │
+        └──────────────────┘      │ Repositories     │
+                                  └────────┬─────────┘
+                                           │
+                                           ▼
+                                    ┌──────────────┐
+                                    │   SQL Server │
+                                    └──────────────┘
+```
 
 # Prerequisites
 
 Before running the application, install:
 
-1. **Visual Studio 2022** with ASP.NET and web development workload
+1. **Visual Studio 2022** with the ASP.NET and web development workload
 2. **.NET 10 SDK**
-3. **SQL Server** or SQL Server Express
-4. Optional: SQL Server Management Studio (SSMS)
+3. **SQL Server**, SQL Server Express, or SQL Server LocalDB
+4. Optional: **SQL Server Management Studio (SSMS)**
 
 Verify the .NET SDK:
 
@@ -105,7 +143,7 @@ Verify the .NET SDK:
 dotnet --version
 ```
 
-The project targets:
+The solution targets:
 
 ```text
 net10.0
@@ -115,7 +153,7 @@ net10.0
 
 # Database Setup
 
-The application uses SQL Server.
+The application uses **SQL Server**.
 
 Update the connection string in:
 
@@ -123,7 +161,7 @@ Update the connection string in:
 Ripple.EventTicketingSystem.API/appsettings.json
 ```
 
-Example:
+Example using SQL Server Express:
 
 ```json
 {
@@ -133,9 +171,7 @@ Example:
 }
 ```
 
-Adjust the server name according to your local SQL Server installation.
-
-For example, if using LocalDB:
+If using SQL Server LocalDB:
 
 ```json
 {
@@ -145,9 +181,13 @@ For example, if using LocalDB:
 }
 ```
 
-## Create the Database
+Adjust the server name and authentication settings according to the local SQL Server installation.
 
-From the solution directory, run the EF Core migrations if migrations are included:
+---
+
+# Entity Framework Core Database
+
+If EF Core migrations are included in the solution, update the database with:
 
 ```bash
 dotnet ef database update
@@ -159,13 +199,19 @@ If the EF Core CLI tool is not installed:
 dotnet tool install --global dotnet-ef
 ```
 
+Then:
+
+```bash
+dotnet ef database update
+```
+
 If migrations are not included with the submitted solution, the database schema can be created using the supplied SQL database script.
 
 ---
 
 # Running the Application
 
-### Visual Studio
+## Visual Studio
 
 1. Open:
 
@@ -173,16 +219,26 @@ If migrations are not included with the submitted solution, the database schema 
 Ripple.EventTicketingSystem.slnx
 ```
 
-2. Set `Ripple.EventTicketingSystem.API` as the startup project.
-3. Press **F5** or **Ctrl+F5**.
+2. Set:
 
-The application will start using the configured HTTPS port.
+```text
+Ripple.EventTicketingSystem.API
+```
 
-### Command Line
+as the startup project.
+
+3. Press **F5** or **Ctrl + F5**.
+
+The API will start using the configured HTTPS port.
+
+---
+
+## Command Line
 
 From the API project directory:
 
 ```bash
+cd Ripple.EventTicketingSystem.API
 dotnet run
 ```
 
@@ -202,36 +258,54 @@ The OpenAPI document is available at:
 https://localhost:7077/openapi/v1.json
 ```
 
-The exact port may differ depending on the local launch settings.
+The exact port may differ depending on the local `launchSettings.json`.
 
-Swagger can be used to test the API without requiring a separate API client.
+Swagger provides an easy way to explore and test the REST API without requiring a separate API client.
 
 ---
+# Running Tests
 
-
-# Testing
-
-The solution contains a separate unit test project:
-
-```text
-Ripple.EventTicketingSystem.Application.Tests
-```
-
-Tests use:
-
-* MSTest
-* Microsoft.NET.Test.Sdk / VSTest
-* Moq
-* MockQueryable
-
-Run all tests from the solution directory:
+From the solution directory:
 
 ```bash
 dotnet test
 ```
 
-Or run tests from Visual Studio using:
+Or run the tests through Visual Studio:
 
-**Test → Test Explorer → Run All Tests**
+```text
+Test
+  → Test Explorer
+  → Run All Tests
+```
 
+---
 
+# API Functionality
+
+The API provides endpoints for:
+
+### Events
+
+```text
+GET    /api/events
+GET    /api/events/{id}
+POST   /api/events
+PUT    /api/events/{id}
+DELETE /api/events/{id}
+```
+
+### Tickets
+
+```text
+POST /api/tickets
+GET  /api/tickets/events/{eventId}/availability
+```
+
+### Reports
+
+```text
+GET /api/reports/sales-summary
+```
+
+The exact routes can be explored through Swagger/OpenAPI.

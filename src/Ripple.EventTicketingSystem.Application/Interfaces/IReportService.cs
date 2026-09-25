@@ -10,5 +10,6 @@ namespace Ripple.EventTicketingSystem.Application.Interfaces
     {
         Task<List<SalesSummaryResponse>> GetSalesSummaryAsync(
             CancellationToken cancellationToken);
+      
     }
 }

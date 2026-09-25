@@ -36,7 +36,7 @@ namespace Ripple.EventTicketingSystem.Domain.Models
         {
             Quantity = quantity;
             UnitPrice = unitPrice;
-            TotalAmount = quantity * unitPrice;
+           // TotalAmount = quantity * unitPrice;
         }
     }
 }
