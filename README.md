@@ -101,31 +101,21 @@ Ripple.EventTicketingSystem
 The solution follows a layered architecture with clear separation of responsibilities.
 
 ```text
-                    ┌──────────────────────┐
-                    │         API          │
-                    │ Controllers/Middleware│
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │    Application       │
-                    │ Services / DTOs /     │
-                    │ Interfaces / Options  │
-                    └──────────┬───────────┘
-                               │
-                  ┌────────────┴────────────┐
-                  │                         │
-                  ▼                         ▼
-        ┌──────────────────┐      ┌──────────────────┐
-        │      Domain      │      │  Infrastructure  │
-        │ Models/Exceptions│      │ DbContext/       │
-        └──────────────────┘      │ Repositories     │
-                                  └────────┬─────────┘
-                                           │
-                                           ▼
-                                    ┌──────────────┐
-                                    │   SQL Server │
-                                    └──────────────┘
+                         ┌──────────────┐                        
+                         │     API      │
+                         └──────┬───────┘
+                                │
+                    ┌───────────┴───────────┐
+                    │                       │
+                    ▼                       ▼
+             ┌─────────────┐       ┌────────────────┐
+             │ Application │◄──────│ Infrastructure │
+             └──────┬──────┘       └───────┬────────┘
+                    │                      │
+                    ▼                      ▼
+              ┌──────────┐          ┌──────────────┐
+              │  Domain  │          │ SQL Server   │
+              └──────────┘          └──────────────┘
 ```
 
 # Prerequisites
