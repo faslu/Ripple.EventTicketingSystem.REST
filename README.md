@@ -117,6 +117,133 @@ The solution follows a layered architecture with clear separation of responsibil
               │  Domain  │          │ SQL Server   │
               └──────────┘          └──────────────┘
 ```
+---
+# Key Design Decisions
+
+## Explicit Repositories
+
+The solution uses explicit repositories rather than a generic repository.
+
+This makes persistence operations more meaningful to each domain area and avoids hiding useful query behavior behind generic CRUD methods.
+
+---
+
+## Dependency Inversion
+
+Application services depend on interfaces:
+
+```text
+Application
+    │
+    ├── IEventRepository
+    ├── IPricingTierRepository
+    ├── ITicketRepository
+    └── IUnitOfWork
+```
+
+Infrastructure provides the concrete implementations:
+
+```text
+Infrastructure
+    │
+    ├── EventRepository
+    ├── PricingTierRepository
+    ├── TicketRepository
+    └── TicketingDbContext
+```
+
+This allows application services to be unit tested without requiring a real database.
+
+---
+
+## Database-Calculated Ticket Total
+
+`Ticket.TotalAmount` is calculated by SQL Server:
+
+```text
+Quantity × UnitPrice
+```
+
+This provides a database-level source of truth for the stored ticket total.
+
+The application therefore does not calculate `TotalAmount` in the `Ticket` constructor.
+
+---
+
+## Transactional Ticket Purchase
+
+Ticket purchasing is executed through the Unit of Work transaction mechanism.
+
+The purchase operation coordinates inventory changes and ticket creation within the same transaction boundary.
+
+This helps ensure that partial updates are not committed when the overall purchase operation fails.
+
+---
+
+## Inventory Protection
+
+The ticket purchasing workflow validates available inventory before creating a ticket.
+
+Pricing tier inventory is updated as part of the purchase operation, helping prevent tickets from being sold beyond the configured availability.
+
+---
+
+# Error Handling
+
+The API uses centralized exception handling middleware.
+
+Application/domain exceptions can be translated into appropriate HTTP responses rather than having each controller implement its own exception-handling logic.
+
+This keeps controllers focused on HTTP/API concerns.
+
+---
+# Architectural Trade-offs
+
+The solution deliberately favours simplicity, maintainability and correctness while avoiding unnecessary complexity for the scope of the exercise.
+
+### Explicit Repositories vs Generic Repository
+
+I considered using a generic repository to reduce repetitive CRUD code. However, I chose explicit repositories such as `EventRepository`, `TicketRepository` and `PricingTierRepository`.
+
+The ticketing domain has different querying and persistence requirements for each entity. Explicit repositories make these responsibilities clearer and allow queries to be optimised independently.
+
+**Trade-off:** This introduces some additional code compared with a generic repository, but provides better control and clearer domain-specific data access.
+
+### Service Layer vs CQRS/MediatR
+
+I considered introducing CQRS and MediatR to separate commands and queries. However, given the size and scope of this application, I considered the additional abstractions unnecessary.
+
+The application/service layer provides sufficient separation between controllers, business logic and persistence while keeping the solution easier to understand and maintain.
+
+**Trade-off:** The current design provides less formal separation between commands and queries, but avoids unnecessary complexity. CQRS/MediatR could be introduced later if the application grows and the complexity justifies it.
+
+### Transactional Consistency vs Distributed Architecture
+
+Preventing ticket overselling is a critical requirement. Therefore, the ticket purchase operation prioritises consistency and atomic database operations.
+
+A more distributed architecture could provide additional scalability, but would introduce complexity around distributed transactions, consistency and failure handling.
+
+**Trade-off:** The design prioritises correctness and consistency over distributed scalability, which is appropriate for the scope of this application.
+
+### Modular Monolith vs Microservices
+
+I considered a microservices architecture but chose a modular monolith for this exercise.
+
+The application has clear logical boundaries, but splitting those boundaries into independent services would introduce additional network communication, deployment, monitoring and operational complexity.
+
+**Trade-off:** A modular monolith provides simpler development and deployment while retaining clear separation of responsibilities. The boundaries can be extracted into services later if there is a genuine scalability or organisational requirement.
+
+### Simplicity vs Future Extensibility
+
+The solution avoids introducing infrastructure such as caching, messaging or distributed systems unless there is a demonstrated requirement for them.
+
+This keeps the implementation focused on the current functional requirements while maintaining clear application, domain and infrastructure boundaries.
+
+**Trade-off:** Some future scalability capabilities would need to be added later, but the current design avoids premature complexity and keeps the solution easier to maintain.
+
+
+---
+
 
 # Prerequisites
 
