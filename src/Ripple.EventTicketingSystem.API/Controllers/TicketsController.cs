@@ -5,7 +5,7 @@ using Ripple.EventTicketingSystem.Application.Interfaces;
 
 namespace Ripple.EventTicketingSystem.API.Controllers
 {
-    [Route("api/[controller]/{eventId:guid}")]
+    [Route("api/events/{eventId:guid}")]
     [ApiController]    
     public class TicketsController : ControllerBase
     {
