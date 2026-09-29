@@ -67,7 +67,9 @@ Ripple.EventTicketingSystem
 │   │   └── Ticket.cs
 │   │
 │   └── Exceptions
-│       └── ...
+│       ├── ConflictException.cs
+│   │   ├── NotFoundException.cs
+│   │   └── ValidationException.cs
 │
 ├── Ripple.EventTicketingSystem.Infrastructure
 │   │
@@ -415,8 +417,8 @@ DELETE /api/events/{id}
 ### Tickets
 
 ```text
-POST /api/tickets
-GET  /api/tickets/events/{eventId}/availability
+POST /api/events
+GET  /api/events/{eventId}/availability
 ```
 
 ### Reports
