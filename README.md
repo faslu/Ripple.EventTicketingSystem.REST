@@ -417,7 +417,7 @@ DELETE /api/events/{id}
 ### Tickets
 
 ```text
-POST /api/events
+POST /api/events/{eventId}/tickets
 GET  /api/events/{eventId}/availability
 ```
 
